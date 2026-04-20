@@ -11,10 +11,17 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from modules.vision import analyse_keyword_screenshot
 from modules.keywords_builder import build_keyword_slides
 from modules.task_builder import build_task_slides
+from modules.task_detail_builder import analyze_task_detail, build_task_detail_slides
 
 st.set_page_config(page_title="SEO Report Builder", page_icon="📊", layout="centered")
 st.title("📊 SEO Report Builder")
 st.caption("Internal tool — inserts SEO report slides into a Google Slides presentation")
+
+DRIVE_UPLOAD_FOLDER = "https://drive.google.com/drive/u/0/folders/1_8N9YLkf9qCk1TJ7KHROJWsxH5gXfRG9"
+st.info(
+    f"📁 **Upload images here first:** [Google Drive Folder]({DRIVE_UPLOAD_FOLDER})  \n"
+    "After uploading, right-click each file → Share → **'Anyone with the link'** (Viewer), then copy the link."
+)
 st.divider()
 
 
@@ -59,9 +66,9 @@ if pres_id:
 
 st.divider()
 
-# ── Section 1: Tasks Completed ────────────────────────────────
-st.subheader("Section 1 — Tasks Completed")
-st.caption("Slides inserted after the **'Tasks Completed'** header slide.")
+# ── Section 1a: Tasks Completed — Overview ───────────────────
+st.subheader("Section 1a — Tasks Completed (Overview)")
+st.caption("Generates a categorised overview slide after the **'Tasks Completed'** header.")
 
 tasks_text = st.text_area(
     "Enter completed task names (one per line)",
@@ -71,15 +78,195 @@ tasks_text = st.text_area(
 
 tasks_ready = bool(pres_id and tasks_text.strip())
 
-if st.button("Insert Tasks Slides", type="primary", disabled=not tasks_ready, key="btn_tasks"):
+if st.button("Insert Tasks Overview Slides", type="primary", disabled=not tasks_ready, key="btn_tasks"):
     with st.spinner("Categorising tasks with Gemini AI..."):
         try:
             n = build_task_slides(pres_id, tasks_text)
-            st.success(f"✓ {n} task slide(s) inserted after 'Tasks Completed' header.")
+            st.success(f"✓ {n} overview slide(s) inserted after 'Tasks Completed' header.")
             st.markdown(f"[Open presentation](https://docs.google.com/presentation/d/{pres_id}/edit)")
         except Exception as e:
             st.error(f"Error: {e}")
             st.exception(e)
+
+st.divider()
+
+# ── Section 1b: Tasks Completed — Detail Slides ──────────────
+st.subheader("Section 1b — Task Details")
+st.caption(
+    "One detailed slide per task — inserted after the overview. "
+    "Each task needs at least one of: description, images, or document link."
+)
+
+# Initialise session state for dynamic task cards
+if "task_detail_cards" not in st.session_state:
+    st.session_state.task_detail_cards = [{"id": 0}]
+if "task_card_counter" not in st.session_state:
+    st.session_state.task_card_counter = 1
+
+# ── "Add Task" button ─────────────────────────────────────────
+def add_task_card():
+    st.session_state.task_card_counter += 1
+    st.session_state.task_detail_cards.append({"id": st.session_state.task_card_counter})
+
+# Render each task card
+cards_to_remove = []
+for idx, card in enumerate(st.session_state.task_detail_cards):
+    cid = card["id"]
+    with st.expander(f"Task {idx + 1}", expanded=True):
+        col_name, col_del = st.columns([5, 1])
+        with col_name:
+            st.text_input(
+                "Task name",
+                key=f"td_name_{cid}",
+                placeholder="e.g. Target Blog 4 Content Writing",
+            )
+        with col_del:
+            st.write("")  # spacer
+            if st.button("✕ Remove", key=f"td_remove_{cid}"):
+                cards_to_remove.append(idx)
+
+        st.text_area(
+            "Description (optional) — what was done and why",
+            key=f"td_desc_{cid}",
+            placeholder="Wrote and optimised blog content targeting keywords X and Y, including title tags and meta descriptions…",
+            height=100,
+        )
+
+        st.text_area(
+            "Image Drive links (one per line, optional)",
+            key=f"td_imgs_{cid}",
+            placeholder="https://drive.google.com/file/d/...\nhttps://drive.google.com/file/d/...",
+            height=80,
+        )
+
+        # Preview images
+        raw_img_links = st.session_state.get(f"td_imgs_{cid}", "")
+        if raw_img_links:
+            img_ids_preview = [
+                extract_drive_id(l.strip())
+                for l in raw_img_links.strip().splitlines()
+                if l.strip()
+            ]
+            valid_ids = [i for i in img_ids_preview if i]
+            if valid_ids:
+                prev_cols = st.columns(min(len(valid_ids), 3))
+                for pi, fid in enumerate(valid_ids[:3]):
+                    with prev_cols[pi]:
+                        try:
+                            st.image(fetch_image_bytes(fid), use_container_width=True)
+                        except Exception:
+                            st.caption("Preview unavailable")
+
+        st.text_input(
+            "Document link (optional) — URL to reference document or page",
+            key=f"td_doc_{cid}",
+            placeholder="https://docs.google.com/...",
+        )
+
+# Remove cards flagged for deletion
+for idx in sorted(cards_to_remove, reverse=True):
+    st.session_state.task_detail_cards.pop(idx)
+if cards_to_remove:
+    st.rerun()
+
+# Add Task + Insert buttons
+col_add, col_spacer, col_insert = st.columns([2, 1, 3])
+with col_add:
+    st.button("＋ Add Another Task", on_click=add_task_card)
+
+# Validate: at least one card has some content
+def cards_have_content() -> bool:
+    for card in st.session_state.task_detail_cards:
+        cid = card["id"]
+        if (
+            st.session_state.get(f"td_name_{cid}", "").strip()
+            or st.session_state.get(f"td_desc_{cid}", "").strip()
+            or st.session_state.get(f"td_imgs_{cid}", "").strip()
+            or st.session_state.get(f"td_doc_{cid}", "").strip()
+        ):
+            return True
+    return False
+
+detail_ready = bool(pres_id and cards_have_content())
+
+with col_insert:
+    insert_detail = st.button(
+        "Insert Task Detail Slides",
+        type="primary",
+        disabled=not detail_ready,
+        key="btn_task_detail",
+    )
+
+if insert_detail:
+    tasks_payload = []
+    progress = st.progress(0, text="Preparing tasks…")
+    total_cards = len(st.session_state.task_detail_cards)
+
+    for i, card in enumerate(st.session_state.task_detail_cards):
+        cid   = card["id"]
+        name  = st.session_state.get(f"td_name_{cid}", "").strip()
+        desc  = st.session_state.get(f"td_desc_{cid}", "").strip()
+        imgs  = st.session_state.get(f"td_imgs_{cid}", "").strip()
+        doc   = st.session_state.get(f"td_doc_{cid}", "").strip()
+
+        # Skip completely empty cards
+        if not any([name, desc, imgs, doc]):
+            continue
+
+        progress.progress((i + 0.2) / total_cards, text=f"Analysing task {i+1}: {name or '(unnamed)'}…")
+
+        # Fetch image bytes for Gemini analysis
+        img_ids   = [extract_drive_id(l.strip()) for l in imgs.splitlines() if l.strip()]
+        img_ids   = [fid for fid in img_ids if fid]
+        img_bytes_list = []
+        img_urls  = []
+        for fid in img_ids[:3]:
+            try:
+                b = fetch_image_bytes(fid)
+                img_bytes_list.append(b)
+                img_urls.append(drive_image_url(fid))
+            except Exception as e:
+                st.warning(f"Could not load image {fid}: {e}")
+
+        # Gemini analysis
+        with st.spinner(f"AI analysing task {i+1}…"):
+            try:
+                result = analyze_task_detail(
+                    task_name        = name or "SEO Task",
+                    description      = desc,
+                    image_bytes_list = img_bytes_list,
+                    doc_url          = doc,
+                )
+            except Exception as e:
+                result = {
+                    "slide_title": name or "SEO Task",
+                    "insight":     desc or "Task completed.",
+                    "link_anchor": "View Document" if doc else "",
+                }
+                st.warning(f"AI analysis failed for task {i+1}, using fallback: {e}")
+
+        tasks_payload.append({
+            "name":        name,
+            "slide_title": result.get("slide_title", name),
+            "insight":     result.get("insight", desc),
+            "image_urls":  img_urls,
+            "doc_url":     doc,
+            "link_anchor": result.get("link_anchor", ""),
+        })
+
+        progress.progress((i + 1) / total_cards, text=f"Task {i+1} analysed ✓")
+
+    if tasks_payload:
+        with st.spinner("Inserting detail slides into presentation…"):
+            try:
+                n = build_task_detail_slides(pres_id, tasks_payload)
+                st.success(f"✓ {n} task detail slide(s) inserted.")
+                st.markdown(f"[Open presentation](https://docs.google.com/presentation/d/{pres_id}/edit)")
+            except Exception as e:
+                st.error(f"Error inserting slides: {e}")
+                st.exception(e)
+    else:
+        st.warning("No valid tasks to insert.")
 
 st.divider()
 
