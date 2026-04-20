@@ -42,7 +42,7 @@ IMGBB_API_KEY = ""  # Paste your key here
 # ── Gemini API (Google AI Studio) ───────────────────────────
 # Used for: analysing Keyword.com screenshots (vision task)
 # Get your key at: https://aistudio.google.com/app/apikey
-GEMINI_API_KEY = "AQ.Ab8RN6I8ikDQ6Kz03WgWpfYL9lopL6znNX2-l0NEm4Egsj0JsA"  # Paste your AIza... key here
+GEMINI_API_KEY = ""  # Set via Streamlit Secrets (GEMINI_API_KEY) or local config
 
 # Model selection — change this line to upgrade/downgrade
 # Recommended for screenshot analysis (cheap, fast, free tier available):
