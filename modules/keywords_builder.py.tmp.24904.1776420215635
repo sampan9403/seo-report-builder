@@ -1,0 +1,231 @@
+# ============================================================
+# keywords_builder.py — Target Keywords Performance slides
+# Style reference: Bannershop template P.10 & P.11
+# Inserts AFTER "Website SEO Performance" header slide
+# ============================================================
+
+import sys, os, uuid
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from modules.slide_utils import (
+    get_service, elem_props, frame_requests, title_requests,
+    text_segments_requests, find_header_index,
+    FRAME_P10, TITLE_P10, BODY_FONT,
+    ORANGE, BLACK, BLUE, GREEN, RED, DARK_BLUE, WHITE
+)
+
+# ── P.10 element positions (from template extraction) ────────
+S10_STATS = {
+    "x": 4400896, "y": 1788675,
+    "w": int(329.08 * 12700), "h": int(187.87 * 12700),
+}
+S10_TRACKING_LINK = {
+    "x": 681300, "y": 1330875,
+    "w": int(582.33 * 12700), "h": int(31.51 * 12700),
+}
+S10_IMAGE = {
+    "x": 632475, "y": 2123950,
+    "w": int(290.73 * 12700), "h": int(134.37 * 12700),
+}
+
+# ── P.11 element positions ───────────────────────────────────
+S11_SORT_LABEL = {
+    "x": 6430950, "y": 1490188,
+    "w": int(173.29 * 12700), "h": int(26.67 * 12700),
+}
+S11_LEGEND = {
+    "x": 5976802, "y": 1709850,
+    "w": int(139.46 * 12700), "h": int(67.87 * 12700),
+}
+S11_INSIGHT = {
+    "x": 5914650, "y": 2477675,
+    "w": int(213.94 * 12700), "h": int(157.13 * 12700),
+}
+S11_IMAGE = {
+    "x": 630425, "y": 1594172,
+    "w": int(420.97 * 12700), "h": int(213.94 * 12700),
+}
+
+KW_SLIDE_IDS = {"seo_kw_slide_10", "seo_kw_slide_11"}
+
+
+def build_keyword_slides(presentation_id: str, data: dict,
+                          image_url_slide10: str, image_url_slide11: str,
+                          tracking_link: str = "") -> None:
+    """
+    Find 'Website SEO Performance' header, then INSERT new P.10 + P.11
+    style slides after it. Always appends — never deletes existing slides.
+    """
+    service = get_service()
+    pres = service.presentations().get(presentationId=presentation_id).execute()
+    slides = pres["slides"]
+
+    # ── Find header (exclude TOC which lists all section names) ──
+    SEO_EXCLUDE = ["tasks completed", "coming tasks"]
+    header_idx = find_header_index(slides, ["website seo"], exclude_keywords=SEO_EXCLUDE)
+    if header_idx is None:
+        header_idx = find_header_index(slides, ["seo performance"], exclude_keywords=SEO_EXCLUDE)
+    if header_idx is None:
+        raise ValueError(
+            "Could not find 'Website SEO Performance' header slide. "
+            "Ensure the target presentation has a section header with that text."
+        )
+
+    # ── Unique IDs per run so each insert is independent ─────
+    run_id = uuid.uuid4().hex[:8]
+    slide10_id = f"seo_kw_{run_id}_10"
+    slide11_id = f"seo_kw_{run_id}_11"
+
+    requests = []
+
+    # ================================================================
+    # SLIDE P.10 — Keywords overview (stats + screenshot)
+    # ================================================================
+    total  = data.get("total_keywords", 0)
+    top3   = data.get("top3_count", 0)
+    top10  = data.get("top10_count", 0)
+    top20  = data.get("top20_count", top10)
+    top30  = data.get("top30_count", top10)
+    base   = {"fontFamily": BODY_FONT, "fontSize": 13}
+
+    requests.append({"createSlide": {
+        "objectId": "seo_kw_slide_10",
+        "insertionIndex": header_idx + 1,
+        "slideLayoutReference": {"predefinedLayout": "BLANK"},
+    }})
+    requests.extend(frame_requests("seo_kw_10", "seo_kw_slide_10", FRAME_P10))
+    requests.extend(title_requests("seo_kw_10", "seo_kw_slide_10",
+                                   "Target Keywords performance", TITLE_P10))
+
+    # Stats text box
+    requests.append({"createShape": {
+        "objectId": "seo_kw_10_stats",
+        "shapeType": "TEXT_BOX",
+        "elementProperties": elem_props("seo_kw_slide_10", S10_STATS),
+    }})
+    requests.extend(text_segments_requests("seo_kw_10_stats", [
+        ("Ranking of ",                                               {**base, "bold": False, "color": BLACK}),
+        (str(total),                                                  {**base, "bold": True,  "color": BLACK}),
+        (" target keywords has been up since the project start\n\n", {**base, "bold": False, "color": BLACK}),
+        (f"{top3}/{total}",                                           {**base, "bold": True,  "color": GREEN}),
+        (" are ranked in top 3\n",                                   {**base, "bold": False, "color": BLACK}),
+        (f"{top10}/{total}",                                          {**base, "bold": True,  "color": GREEN}),
+        (" are ranked in top 1 page\n",                              {**base, "bold": False, "color": BLACK}),
+        (f"{top20}/{total}",                                          {**base, "bold": True,  "color": GREEN}),
+        (" are ranked in top 2 pages\n",                             {**base, "bold": False, "color": BLACK}),
+        (f"{top30}/{total}",                                          {**base, "bold": True,  "color": GREEN}),
+        (" are ranked in top 3 pages",                               {**base, "bold": False, "color": BLACK}),
+    ]))
+
+    # Live Tracking Link
+    requests.append({"createShape": {
+        "objectId": "seo_kw_10_link",
+        "shapeType": "TEXT_BOX",
+        "elementProperties": elem_props("seo_kw_slide_10", S10_TRACKING_LINK),
+    }})
+    if tracking_link:
+        link_text = "Live Tracking Link"
+        requests.append({"insertText": {
+            "objectId": "seo_kw_10_link",
+            "text": link_text,
+            "insertionIndex": 0,
+        }})
+        requests.append({"updateTextStyle": {
+            "objectId": "seo_kw_10_link",
+            "textRange": {"type": "ALL"},
+            "style": {
+                "fontFamily": BODY_FONT,
+                "fontSize": {"magnitude": 14, "unit": "PT"},
+                "foregroundColor": {"opaqueColor": {"rgbColor": BLUE}},
+                "link": {"url": tracking_link},
+                "underline": True,
+            },
+            "fields": "fontFamily,fontSize,foregroundColor,link,underline",
+        }})
+
+    # Screenshot image
+    requests.append({"createImage": {
+        "objectId": "seo_kw_10_image",
+        "url": image_url_slide10,
+        "elementProperties": elem_props("seo_kw_slide_10", S10_IMAGE),
+    }})
+
+    # ================================================================
+    # SLIDE P.11 — Keywords detail (insight + ranking screenshot)
+    # ================================================================
+    top1       = data.get("top1_count", 0)
+    improved   = data.get("improved_count", 0)
+    maintained = data.get("maintained_count", 0)
+
+    requests.append({"createSlide": {
+        "objectId": "seo_kw_slide_11",
+        "insertionIndex": header_idx + 2,
+        "slideLayoutReference": {"predefinedLayout": "BLANK"},
+    }})
+    requests.extend(frame_requests("seo_kw_11", "seo_kw_slide_11", FRAME_P10))
+    requests.extend(title_requests("seo_kw_11", "seo_kw_slide_11",
+                                   "Target Keywords performance", TITLE_P10))
+
+    # "Sort by keywords" label
+    requests.append({"createShape": {
+        "objectId": "seo_kw_11_sort",
+        "shapeType": "TEXT_BOX",
+        "elementProperties": elem_props("seo_kw_slide_11", S11_SORT_LABEL),
+    }})
+    requests.append({"insertText": {
+        "objectId": "seo_kw_11_sort",
+        "text": "Sort by keywords' ranking",
+        "insertionIndex": 0,
+    }})
+    requests.append({"updateTextStyle": {
+        "objectId": "seo_kw_11_sort",
+        "textRange": {"type": "ALL"},
+        "style": {
+            "fontFamily": BODY_FONT,
+            "fontSize": {"magnitude": 10, "unit": "PT"},
+            "bold": True,
+        },
+        "fields": "fontFamily,fontSize,bold",
+    }})
+
+    # Ranking legend
+    requests.append({"createShape": {
+        "objectId": "seo_kw_11_legend",
+        "shapeType": "TEXT_BOX",
+        "elementProperties": elem_props("seo_kw_slide_11", S11_LEGEND),
+    }})
+    requests.extend(text_segments_requests("seo_kw_11_legend", [
+        ("Ranking Improved\n\n",   {"fontFamily": BODY_FONT, "fontSize": 11, "bold": True, "color": RED}),
+        ("Ranking Maintained",     {"fontFamily": BODY_FONT, "fontSize": 11, "bold": True, "color": DARK_BLUE}),
+    ]))
+
+    # Insight text box
+    requests.append({"createShape": {
+        "objectId": "seo_kw_11_insight",
+        "shapeType": "TEXT_BOX",
+        "elementProperties": elem_props("seo_kw_slide_11", S11_INSIGHT),
+    }})
+    requests.extend(text_segments_requests("seo_kw_11_insight", [
+        ("Since the project started, ",                  {**base, "bold": False, "color": BLACK}),
+        (str(top1),                                      {**base, "bold": True,  "color": BLACK}),
+        (" keywords reached ",                           {**base, "bold": False, "color": BLACK}),
+        ("position 1",                                   {**base, "bold": True,  "color": BLACK}),
+        (", with ",                                      {**base, "bold": False, "color": BLACK}),
+        (f"{maintained} maintaining their top ranking",  {**base, "bold": True,  "color": DARK_BLUE}),
+        (". ",                                           {**base, "bold": False, "color": BLACK}),
+        (f"{improved} keywords improved their rankings", {**base, "bold": True,  "color": RED}),
+        (".",                                            {**base, "bold": False, "color": BLACK}),
+    ]))
+
+    # Ranking screenshot image
+    requests.append({"createImage": {
+        "objectId": "seo_kw_11_image",
+        "url": image_url_slide11,
+        "elementProperties": elem_props("seo_kw_slide_11", S11_IMAGE),
+    }})
+
+    # ── Execute ───────────────────────────────────────────────
+    service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": requests}
+    ).execute()
+    print(f"[OK] Keywords slides inserted after slide index {header_idx}")

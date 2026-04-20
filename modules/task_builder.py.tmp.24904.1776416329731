@@ -1,0 +1,204 @@
+# ============================================================
+# task_builder.py — Tasks Completed slides builder
+# Style reference: Bannershop template P.4 (Overview slide)
+# ============================================================
+
+import json
+from google import genai
+from google.genai import types
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import GEMINI_API_KEY, GEMINI_MODEL
+from modules.slide_utils import (
+    get_service, elem_props, frame_requests, title_requests,
+    text_segments_requests, find_header_index,
+    FRAME_P4, TITLE_P4, BODY_FONT, ORANGE, BLACK, WHITE
+)
+
+# ── Layout: Task content text box (P.4 style) ────────────────
+CONTENT_BOX = {
+    "x": 900975,              "y": 1176650,
+    "w": int(574.3 * 12700),  "h": int(255.5 * 12700),
+}
+
+# Approx lines per slide for pagination
+TASKS_PER_SLIDE = 14   # conservative estimate (categories + tasks)
+
+# Slide objectId sets for idempotent re-runs
+TASK_SLIDE_PREFIX = "seo_task_slide"
+
+
+def categorize_tasks(tasks_text: str) -> dict:
+    """
+    Use Gemini to categorise a list of task names.
+    Returns: {"Category Name": ["task1", "task2", ...], ...}
+    """
+    api_key = GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
+    client = genai.Client(api_key=api_key)
+
+    prompt = f"""You are an SEO project manager. Categorise the following SEO tasks into logical groups.
+
+Tasks (one per line):
+{tasks_text}
+
+Return ONLY valid JSON, no markdown, no explanation:
+{{
+  "Category Name 1": ["task 1", "task 2"],
+  "Category Name 2": ["task 3"]
+}}
+
+Rules:
+- Category names should be short (2-4 words), professional SEO terminology
+- Keep the original task names exactly as provided
+- If a task clearly belongs to one category, put it there
+- Maximum 5 categories"""
+
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=[prompt]
+    )
+    raw = response.text.strip()
+    if raw.startswith("```"):
+        raw = "\n".join(raw.split("\n")[1:-1])
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        # Fallback: single "Tasks" category with all tasks
+        tasks = [t.strip() for t in tasks_text.strip().split("\n") if t.strip()]
+        return {"Tasks": tasks}
+
+
+def paginate_tasks(categories: dict, tasks_per_slide: int = TASKS_PER_SLIDE) -> list:
+    """
+    Split categorised tasks across multiple slides if needed.
+    Returns list of dicts [{category: [tasks], ...}, ...]
+    Each dict = one slide worth of content.
+    """
+    pages = []
+    current_page = {}
+    current_count = 0
+
+    for category, tasks in categories.items():
+        # Each category takes: 1 line (header) + len(tasks) lines + 1 blank line
+        needed = 1 + len(tasks) + 1
+        if current_count + needed > tasks_per_slide and current_page:
+            pages.append(current_page)
+            current_page = {}
+            current_count = 0
+        current_page[category] = tasks
+        current_count += needed
+
+    if current_page:
+        pages.append(current_page)
+    return pages if pages else [{}]
+
+
+def build_task_content_segments(page_categories: dict) -> list:
+    """
+    Build styled text segments for one slide's task content.
+    Format: Category (orange bold 13pt) → tasks (black 11pt)
+    """
+    base_cat  = {"fontFamily": BODY_FONT, "fontSize": 13, "bold": True,  "color": ORANGE}
+    base_task = {"fontFamily": BODY_FONT, "fontSize": 11, "bold": False, "color": BLACK}
+    segments = []
+    cat_list = list(page_categories.items())
+
+    for i, (category, tasks) in enumerate(cat_list):
+        segments.append((category + "\n", base_cat))
+        for task in tasks:
+            segments.append((task + "\n", base_task))
+        # Blank line between categories (except after last)
+        if i < len(cat_list) - 1:
+            segments.append(("\n", base_task))
+
+    return segments
+
+
+def build_task_slides(presentation_id: str, tasks_text: str) -> int:
+    """
+    Find 'Tasks Completed' header, delete existing task slides,
+    then insert new task slides after the header.
+    Returns the number of slides created.
+    """
+    service = get_service()
+    pres = service.presentations().get(presentationId=presentation_id).execute()
+    slides = pres["slides"]
+
+    # ── Find header (exclude TOC which lists all section names) ──
+    TASKS_EXCLUDE = ["website seo", "coming tasks"]
+    header_idx = find_header_index(slides, ["tasks completed"], exclude_keywords=TASKS_EXCLUDE)
+    if header_idx is None:
+        header_idx = find_header_index(slides, ["tasks"], exclude_keywords=TASKS_EXCLUDE)
+    if header_idx is None:
+        raise ValueError("Could not find 'Tasks Completed' header slide in the presentation.")
+
+    # ── Delete previously generated task slides ───────────────
+    existing_task_ids = {
+        s["objectId"] for s in slides
+        if s["objectId"].startswith(TASK_SLIDE_PREFIX)
+    }
+    if existing_task_ids:
+        del_reqs = [{"deleteObject": {"objectId": oid}} for oid in existing_task_ids]
+        service.presentations().batchUpdate(
+            presentationId=presentation_id,
+            body={"requests": del_reqs}
+        ).execute()
+        # Refresh slides after deletion
+        pres = service.presentations().get(presentationId=presentation_id).execute()
+        slides = pres["slides"]
+        header_idx = find_header_index(slides, ["tasks completed"], exclude_keywords=TASKS_EXCLUDE)
+        if header_idx is None:
+            header_idx = find_header_index(slides, ["tasks"], exclude_keywords=TASKS_EXCLUDE)
+
+    # ── Categorise and paginate tasks ─────────────────────────
+    categories = categorize_tasks(tasks_text)
+    pages = paginate_tasks(categories)
+
+    # ── Build all requests ────────────────────────────────────
+    all_requests = []
+    insertion_offset = 0
+
+    for page_num, page_categories in enumerate(pages):
+        insert_at  = header_idx + 1 + insertion_offset
+        slide_id   = f"{TASK_SLIDE_PREFIX}_{page_num}"
+        obj_prefix = f"seo_task_p{page_num}"
+
+        # Create blank slide
+        all_requests.append({"createSlide": {
+            "objectId": slide_id,
+            "insertionIndex": insert_at,
+            "slideLayoutReference": {"predefinedLayout": "BLANK"},
+        }})
+
+        # Decorative frame + dots
+        all_requests.extend(frame_requests(obj_prefix, slide_id, FRAME_P4))
+
+        # Slide title
+        all_requests.extend(title_requests(obj_prefix, slide_id, "overview", TITLE_P4))
+
+        # Content text box
+        content_id = f"{obj_prefix}_content"
+        all_requests.append({"createShape": {
+            "objectId": content_id,
+            "shapeType": "TEXT_BOX",
+            "elementProperties": elem_props(slide_id, CONTENT_BOX),
+        }})
+        all_requests.append({"updateShapeProperties": {
+            "objectId": content_id,
+            "shapeProperties": {
+                "shapeBackgroundFill": {"solidFill": {"color": {"rgbColor": WHITE}, "alpha": 1}}
+            },
+            "fields": "shapeBackgroundFill",
+        }})
+        segments = build_task_content_segments(page_categories)
+        all_requests.extend(text_segments_requests(content_id, segments))
+
+        insertion_offset += 1
+
+    # ── Execute ───────────────────────────────────────────────
+    service.presentations().batchUpdate(
+        presentationId=presentation_id,
+        body={"requests": all_requests}
+    ).execute()
+
+    return len(pages)

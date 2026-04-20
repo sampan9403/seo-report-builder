@@ -1,0 +1,236 @@
+# ============================================================
+# slides_builder.py — Updates Slides 10 & 11 to match Bannershop template
+# ============================================================
+
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from config import CREDENTIALS_FILE, SCOPES
+
+# ── Bannershop exact brand colors (from template inspection) ──
+GREEN = {"red": 0.42, "green": 0.66, "blue": 0.31}   # improved numbers
+BLACK = {"red": 0.0,  "green": 0.0,  "blue": 0.0}
+RED   = {"red": 1.0,  "green": 0.0,  "blue": 0.0}    # ranking improved
+BLUE  = {"red": 0.0,  "green": 0.0,  "blue": 1.0}    # ranking maintained
+BODY_FONT = "Montserrat"
+BODY_SIZE = 13
+
+
+def get_service():
+    creds = service_account.Credentials.from_service_account_file(
+        CREDENTIALS_FILE, scopes=SCOPES
+    )
+    return build("slides", "v1", credentials=creds)
+
+
+def styled_text_requests(obj_id: str, segments: list) -> list:
+    """
+    Build batchUpdate requests for mixed-style text in one shape.
+    segments: list of (text, style_dict)
+    style_dict keys: bold (bool), color (rgb dict), fontFamily (str), fontSize (int)
+    Pass None as style_dict to skip styling that segment.
+    """
+    requests = [
+        {"deleteText": {"objectId": obj_id, "textRange": {"type": "ALL"}}}
+    ]
+
+    full_text = "".join(text for text, _ in segments)
+    requests.append({
+        "insertText": {
+            "objectId": obj_id,
+            "text": full_text,
+            "insertionIndex": 0
+        }
+    })
+
+    cursor = 0
+    for text, style in segments:
+        start = cursor
+        end = cursor + len(text)
+        cursor = end
+
+        if not style or start == end:
+            continue
+
+        style_dict = {}
+        fields = []
+
+        if "bold" in style:
+            style_dict["bold"] = style["bold"]
+            fields.append("bold")
+        if "color" in style and style["color"] is not None:
+            style_dict["foregroundColor"] = {
+                "opaqueColor": {"rgbColor": style["color"]}
+            }
+            fields.append("foregroundColor")
+        if "fontFamily" in style:
+            style_dict["fontFamily"] = style["fontFamily"]
+            fields.append("fontFamily")
+        if "fontSize" in style:
+            style_dict["fontSize"] = {
+                "magnitude": style["fontSize"], "unit": "PT"
+            }
+            fields.append("fontSize")
+
+        if style_dict:
+            requests.append({
+                "updateTextStyle": {
+                    "objectId": obj_id,
+                    "textRange": {
+                        "type": "FIXED_RANGE",
+                        "startIndex": start,
+                        "endIndex": end
+                    },
+                    "style": style_dict,
+                    "fields": ",".join(fields)
+                }
+            })
+
+    return requests
+
+
+def find_element(slide, match_fn):
+    """Find first page element matching a condition function."""
+    for elem in slide.get("pageElements", []):
+        if match_fn(elem):
+            return elem
+    return None
+
+
+def get_text_content(elem):
+    shape = elem.get("shape", {})
+    return " ".join(
+        te.get("textRun", {}).get("content", "")
+        for te in shape.get("text", {}).get("textElements", [])
+    )
+
+
+def get_rendered_size(elem):
+    size = elem.get("size", {})
+    t = elem.get("transform", {})
+    w = size.get("width", {}).get("magnitude", 0) * t.get("scaleX", 1) / 12700
+    h = size.get("height", {}).get("magnitude", 0) * t.get("scaleY", 1) / 12700
+    return w, h
+
+
+def build_keyword_slides(presentation_id: str, data: dict,
+                          image_url_slide10: str, image_url_slide11: str):
+    service = get_service()
+    pres = service.presentations().get(presentationId=presentation_id).execute()
+    slides = pres["slides"]
+
+    requests = []
+
+    # ================================================================
+    # SLIDE 10 — Summary stats + screenshot
+    # ================================================================
+    slide10 = slides[9]
+
+    # Find stats text box — use "ranking of" only (title also contains "target keywords")
+    stats_box = find_element(slide10, lambda e:
+        "ranking of" in get_text_content(e).lower()
+    )
+    if not stats_box:
+        print("[WARN] Slide 10: stats_box not found — check template text contains 'Ranking of'")
+
+    # Find image element (largest image on the slide)
+    img10 = find_element(slide10, lambda e: "image" in e)
+    if not img10:
+        print("[WARN] Slide 10: no image element found")
+
+    total   = data.get("total_keywords", 0)
+    top3    = data.get("top3_count", 0)
+    top10   = data.get("top10_count", 0)
+    top20   = data.get("top20_count", top10)
+    top30   = data.get("top30_count", top10)
+
+    base = {"fontFamily": BODY_FONT, "fontSize": BODY_SIZE}
+
+    # Build mixed-style text for Slide 10
+    if stats_box:
+        segments = [
+            ("Ranking of ",                              {**base, "bold": False, "color": BLACK}),
+            (str(total),                                 {**base, "bold": True,  "color": BLACK}),
+            (" target keywords has been up since the project start\n\n",
+                                                         {**base, "bold": False, "color": BLACK}),
+            (f"{top3}/{total}",                          {**base, "bold": True,  "color": GREEN}),
+            (" are ranked in top 3\n",                  {**base, "bold": False, "color": BLACK}),
+            (f"{top10}/{total}",                         {**base, "bold": True,  "color": GREEN}),
+            (" are ranked in top 1 page\n",             {**base, "bold": False, "color": BLACK}),
+            (f"{top20}/{total}",                         {**base, "bold": True,  "color": GREEN}),
+            (" are ranked in top 2 pages\n",            {**base, "bold": False, "color": BLACK}),
+            (f"{top30}/{total}",                         {**base, "bold": True,  "color": GREEN}),
+            (" are ranked in top 3 pages",              {**base, "bold": False, "color": BLACK}),
+        ]
+        requests.extend(styled_text_requests(stats_box["objectId"], segments))
+
+    # Replace screenshot image
+    if img10 and image_url_slide10:
+        requests.append({
+            "replaceImage": {
+                "imageObjectId": img10["objectId"],
+                "url": image_url_slide10,
+                "imageReplaceMethod": "CENTER_INSIDE"
+            }
+        })
+
+    # ================================================================
+    # SLIDE 11 — Detailed table + insight with colour-coded text
+    # ================================================================
+    slide11 = slides[10]
+
+    improved   = data.get("improved_count", 0)
+    maintained = data.get("maintained_count", 0)
+    top1       = data.get("top1_count", 0)
+
+    # Find insight text box (contains "project started" or "keywords reached")
+    insight_box = find_element(slide11, lambda e:
+        "project started" in get_text_content(e).lower() or
+        "keywords reached" in get_text_content(e).lower() or
+        "since the" in get_text_content(e).lower()
+    )
+    if not insight_box:
+        print("[WARN] Slide 11: insight_box not found — check template text contains 'Since the project started'")
+
+    # Find the largest image on slide 11
+    img11 = None
+    max_area = 0
+    for elem in slide11.get("pageElements", []):
+        if "image" in elem:
+            w, h = get_rendered_size(elem)
+            if w * h > max_area:
+                max_area = w * h
+                img11 = elem
+
+    # Build colour-coded insight text for Slide 11
+    if insight_box:
+        segments = [
+            ("Since the project started, ",                         {**base, "bold": False, "color": BLACK}),
+            (str(top1),                                             {**base, "bold": True,  "color": BLACK}),
+            (" keywords reached ",                                  {**base, "bold": False, "color": BLACK}),
+            ("position 1",                                          {**base, "bold": True,  "color": BLACK}),
+            (", with ",                                             {**base, "bold": False, "color": BLACK}),
+            (f"{maintained} maintaining their top ranking",         {**base, "bold": True,  "color": BLUE}),
+            (". ",                                                  {**base, "bold": False, "color": BLACK}),
+            (f"{improved} keywords improved their rankings",        {**base, "bold": True,  "color": RED}),
+            (".",                                                   {**base, "bold": False, "color": BLACK}),
+        ]
+        requests.extend(styled_text_requests(insight_box["objectId"], segments))
+
+    # Replace table screenshot
+    if img11 and image_url_slide11:
+        requests.append({
+            "replaceImage": {
+                "imageObjectId": img11["objectId"],
+                "url": image_url_slide11,
+                "imageReplaceMethod": "CENTER_INSIDE"
+            }
+        })
+
+    # Execute all at once
+    if requests:
+        service.presentations().batchUpdate(
+            presentationId=presentation_id,
+            body={"requests": requests}
+        ).execute()

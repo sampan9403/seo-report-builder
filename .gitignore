@@ -1,0 +1,12 @@
+# Credentials — NEVER upload to GitHub
+Google-Slides-Keys.json
+*.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Streamlit local secrets
+.streamlit/secrets.toml

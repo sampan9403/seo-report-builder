@@ -1,0 +1,13 @@
+SEO Report Builder — 啟動指令
+==============================
+
+在 CMD 或 PowerShell 輸入以下指令:
+
+  cd C:\Users\USER\Desktop\SEO-Report-Builder
+  python -m streamlit run app.py
+
+啟動後在瀏覽器開啟:
+  http://localhost:8501
+
+==============================
+停止: 在 CMD 按 Ctrl+C
