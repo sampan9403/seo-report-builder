@@ -8,10 +8,20 @@ import os, sys, re
 import requests as http_requests
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from modules.vision import analyse_keyword_screenshot
-from modules.keywords_builder import build_keyword_slides
+from modules.keywords_builder import (
+    build_keyword_overview_slide,
+    build_keyword_table_slides,
+    parse_keyword_csv,
+)
 from modules.task_builder import build_task_slides
 from modules.task_detail_builder import analyze_task_detail, build_task_detail_slides
+from modules.ahrefs_builder import (
+    analyze_ahrefs_slide,
+    build_ahrefs_slides,
+    parse_competitor_csv,
+    analyze_organic_competitors,
+    build_organic_competitors_slide,
+)
 
 st.set_page_config(page_title="SEO Report Builder", page_icon="📊", layout="centered")
 st.title("📊 SEO Report Builder")
@@ -66,7 +76,9 @@ if pres_id:
 
 st.divider()
 
-# ── Section 1a: Tasks Completed — Overview ───────────────────
+# ════════════════════════════════════════════════════════════
+# Section 1a — Tasks Completed (Overview)
+# ════════════════════════════════════════════════════════════
 st.subheader("Section 1a — Tasks Completed (Overview)")
 st.caption("Generates a categorised overview slide after the **'Tasks Completed'** header.")
 
@@ -90,25 +102,24 @@ if st.button("Insert Tasks Overview Slides", type="primary", disabled=not tasks_
 
 st.divider()
 
-# ── Section 1b: Tasks Completed — Detail Slides ──────────────
+# ════════════════════════════════════════════════════════════
+# Section 1b — Task Details
+# ════════════════════════════════════════════════════════════
 st.subheader("Section 1b — Task Details")
 st.caption(
     "One detailed slide per task — inserted after the overview. "
     "Each task needs at least one of: description, images, or document link."
 )
 
-# Initialise session state for dynamic task cards
 if "task_detail_cards" not in st.session_state:
     st.session_state.task_detail_cards = [{"id": 0}]
 if "task_card_counter" not in st.session_state:
     st.session_state.task_card_counter = 1
 
-# ── "Add Task" button ─────────────────────────────────────────
 def add_task_card():
     st.session_state.task_card_counter += 1
     st.session_state.task_detail_cards.append({"id": st.session_state.task_card_counter})
 
-# Render each task card
 cards_to_remove = []
 for idx, card in enumerate(st.session_state.task_detail_cards):
     cid = card["id"]
@@ -121,31 +132,28 @@ for idx, card in enumerate(st.session_state.task_detail_cards):
                 placeholder="e.g. Target Blog 4 Content Writing",
             )
         with col_del:
-            st.write("")  # spacer
+            st.write("")
             if st.button("✕ Remove", key=f"td_remove_{cid}"):
                 cards_to_remove.append(idx)
 
         st.text_area(
             "Description (optional) — what was done and why",
             key=f"td_desc_{cid}",
-            placeholder="Wrote and optimised blog content targeting keywords X and Y, including title tags and meta descriptions…",
+            placeholder="Wrote and optimised blog content targeting keywords X and Y…",
             height=100,
         )
-
         st.text_area(
             "Image Drive links (one per line, optional)",
             key=f"td_imgs_{cid}",
-            placeholder="https://drive.google.com/file/d/...\nhttps://drive.google.com/file/d/...",
+            placeholder="https://drive.google.com/file/d/...",
             height=80,
         )
 
-        # Preview images
         raw_img_links = st.session_state.get(f"td_imgs_{cid}", "")
         if raw_img_links:
             img_ids_preview = [
                 extract_drive_id(l.strip())
-                for l in raw_img_links.strip().splitlines()
-                if l.strip()
+                for l in raw_img_links.strip().splitlines() if l.strip()
             ]
             valid_ids = [i for i in img_ids_preview if i]
             if valid_ids:
@@ -163,18 +171,15 @@ for idx, card in enumerate(st.session_state.task_detail_cards):
             placeholder="https://docs.google.com/...",
         )
 
-# Remove cards flagged for deletion
 for idx in sorted(cards_to_remove, reverse=True):
     st.session_state.task_detail_cards.pop(idx)
 if cards_to_remove:
     st.rerun()
 
-# Add Task + Insert buttons
 col_add, col_spacer, col_insert = st.columns([2, 1, 3])
 with col_add:
     st.button("＋ Add Another Task", on_click=add_task_card)
 
-# Validate: at least one card has some content
 def cards_have_content() -> bool:
     for card in st.session_state.task_detail_cards:
         cid = card["id"]
@@ -209,17 +214,15 @@ if insert_detail:
         imgs  = st.session_state.get(f"td_imgs_{cid}", "").strip()
         doc   = st.session_state.get(f"td_doc_{cid}", "").strip()
 
-        # Skip completely empty cards
         if not any([name, desc, imgs, doc]):
             continue
 
         progress.progress((i + 0.2) / total_cards, text=f"Analysing task {i+1}: {name or '(unnamed)'}…")
 
-        # Fetch image bytes for Gemini analysis
-        img_ids   = [extract_drive_id(l.strip()) for l in imgs.splitlines() if l.strip()]
-        img_ids   = [fid for fid in img_ids if fid]
+        img_ids = [extract_drive_id(l.strip()) for l in imgs.splitlines() if l.strip()]
+        img_ids = [fid for fid in img_ids if fid]
         img_bytes_list = []
-        img_urls  = []
+        img_urls = []
         for fid in img_ids[:3]:
             try:
                 b = fetch_image_bytes(fid)
@@ -228,14 +231,13 @@ if insert_detail:
             except Exception as e:
                 st.warning(f"Could not load image {fid}: {e}")
 
-        # Gemini analysis
         with st.spinner(f"AI analysing task {i+1}…"):
             try:
                 result = analyze_task_detail(
-                    task_name        = name or "SEO Task",
-                    description      = desc,
-                    image_bytes_list = img_bytes_list,
-                    doc_url          = doc,
+                    task_name=name or "SEO Task",
+                    description=desc,
+                    image_bytes_list=img_bytes_list,
+                    doc_url=doc,
                 )
             except Exception as e:
                 result = {
@@ -253,7 +255,6 @@ if insert_detail:
             "doc_url":     doc,
             "link_anchor": result.get("link_anchor", ""),
         })
-
         progress.progress((i + 1) / total_cards, text=f"Task {i+1} analysed ✓")
 
     if tasks_payload:
@@ -270,94 +271,450 @@ if insert_detail:
 
 st.divider()
 
-# ── Section 2: Target Keywords Performance ────────────────────
-st.subheader("Section 2 — Target Keywords Performance")
-st.caption("Slides inserted after the **'Website SEO Performance'** header slide.")
+# ════════════════════════════════════════════════════════════
+# Section 2a — Keywords Overview
+# ════════════════════════════════════════════════════════════
+st.subheader("Section 2a — Keywords Overview")
+st.caption(
+    "One overview slide with ranking stats, live tracking link, and screenshot. "
+    "Inserted at the end of the **'Website SEO Performance'** section."
+)
 
 tracking_link = st.text_input(
-    "Live Tracking Link URL",
-    placeholder="https://app.keyword.com/..."
+    "Live Tracking Link URL (optional)",
+    placeholder="https://app.keyword.com/...",
+    key="kw_tracking_link",
 )
 
-st.info(
-    "**How to get Drive image links:**\n"
-    "1. Upload screenshot to Google Drive\n"
-    "2. Right-click → Share → **'Anyone with the link'** (Viewer)\n"
-    "3. Copy link and paste below"
+st.markdown("**Overview screenshot** (required)")
+st.caption(
+    "Upload a keyword.com overview screenshot to Google Drive, "
+    "share as 'Anyone with the link', then paste the link below."
+)
+link10 = st.text_input(
+    "Google Drive link",
+    placeholder="https://drive.google.com/file/d/...",
+    key="link10",
+)
+id10 = extract_drive_id(link10) if link10 else ""
+if id10:
+    st.success(f"File ID: `{id10}`")
+    try:
+        st.image(fetch_image_bytes(id10), caption="Overview screenshot preview", width=400)
+    except Exception:
+        st.warning("Preview unavailable.")
+elif link10:
+    st.error("Could not extract file ID.")
+
+st.markdown("**Keyword CSV (optional — for ranking stats)**")
+st.caption("If uploaded, the slide will display top-3 / page-1 / improved counts.")
+kw_csv_for_overview = st.file_uploader(
+    "Upload keyword.com CSV (optional)",
+    type=["csv"],
+    key="kw_csv_overview",
+)
+kw_data_for_overview = None
+if kw_csv_for_overview:
+    try:
+        _bytes = kw_csv_for_overview.read()
+        kw_csv_for_overview.seek(0)
+        kw_data_for_overview = parse_keyword_csv(_bytes)
+        st.success(
+            f"CSV loaded: {kw_data_for_overview['total']} keywords — "
+            f"Top 3: {kw_data_for_overview['top3_count']} | "
+            f"Page 1: {kw_data_for_overview['top10_count']} | "
+            f"Improved: {kw_data_for_overview['improved_count']}"
+        )
+    except Exception as e:
+        st.error(f"Could not parse CSV: {e}")
+
+custom_text_a = st.text_area(
+    "Additional notes for this slide (optional)",
+    key="kw_custom_a",
+    placeholder="e.g. 本月關鍵字整體排名持續上升，特別是 foam board 和 backdrop 表現突出…",
+    height=80,
 )
 
-col_a, col_b = st.columns(2)
-
-with col_a:
-    st.markdown("**Overview screenshot** (P.10)")
-    link10 = st.text_input("Google Drive link", placeholder="https://drive.google.com/file/d/...", key="link10")
-    id10 = extract_drive_id(link10) if link10 else ""
-    if id10:
-        st.success(f"File ID: `{id10}`")
-        try:
-            st.image(fetch_image_bytes(id10), caption="Overview preview", width=300)
-        except Exception:
-            st.warning("Preview unavailable.")
-    elif link10:
-        st.error("Could not extract file ID.")
-
-with col_b:
-    st.markdown("**Ranking screenshot** (P.11, optional)")
-    link11 = st.text_input("Google Drive link", placeholder="Leave blank to use overview image", key="link11")
-    id11 = extract_drive_id(link11) if link11 else id10
-    if link11 and id11:
-        st.success(f"File ID: `{id11}`")
-        try:
-            st.image(fetch_image_bytes(id11), caption="Ranking preview", width=300)
-        except Exception:
-            st.warning("Preview unavailable.")
-    elif link11:
-        st.error("Could not extract file ID.")
-
-kw_ready = bool(pres_id and id10)
-
-if not kw_ready:
+ov_ready = bool(pres_id and id10)
+if not ov_ready:
     missing = []
     if not pres_id: missing.append("presentation ID")
-    if not id10:    missing.append("overview screenshot link")
+    if not id10:    missing.append("overview screenshot")
     if missing:
         st.warning(f"Please complete: {', '.join(missing)}")
 
-if st.button("Insert Keywords Slides", type="primary", disabled=not kw_ready, key="btn_kw"):
+if st.button("Insert Keywords Overview Slide", type="primary", disabled=not ov_ready, key="btn_kw_overview"):
     try:
-        # 1. Download image for Gemini analysis
-        with st.spinner("Downloading overview screenshot..."):
-            img_bytes = fetch_image_bytes(id10)
-
-        # 2. Analyse with Gemini Vision
-        with st.spinner("Analysing keywords with Gemini AI..."):
-            keyword_data = analyse_keyword_screenshot(img_bytes)
-
-        total = keyword_data.get("total_keywords", 0)
-        st.success(f"Extracted: {total} keywords detected")
-        with st.expander("View extracted data"):
-            st.json(keyword_data)
-
-        # 3. Build image URLs for Slides API
-        url10 = drive_image_url(id10)
-        url11 = drive_image_url(id11)
-
-        # 4. Insert slides
-        with st.spinner("Inserting keyword slides into presentation..."):
-            build_keyword_slides(
-                presentation_id=pres_id,
-                data=keyword_data,
-                image_url_slide10=url10,
-                image_url_slide11=url11,
-                tracking_link=tracking_link,
+        with st.spinner("Inserting overview slide…"):
+            url_overview = drive_image_url(id10)
+            build_keyword_overview_slide(
+                presentation_id    = pres_id,
+                kw_data            = kw_data_for_overview,
+                tracking_link      = tracking_link,
+                image_url_overview = url_overview,
+                custom_text_a      = custom_text_a,
             )
-
-        st.success("✓ Keywords Performance slides (P.10 & P.11) inserted.")
+        st.success("✓ Keywords Overview slide inserted.")
         st.markdown(f"[Open presentation](https://docs.google.com/presentation/d/{pres_id}/edit)")
-
     except Exception as e:
         st.error(f"Error: {e}")
         st.exception(e)
+
+st.divider()
+
+# ════════════════════════════════════════════════════════════
+# Section 2b — Keywords Ranking Table
+# ════════════════════════════════════════════════════════════
+st.subheader("Section 2b — Keywords Ranking Table")
+st.caption(
+    "Generates a ranking table from keyword.com CSV export. "
+    "Columns: Keyword | Start | Rank | Life | Volume. "
+    "Paginated automatically if there are many keywords."
+)
+
+st.markdown("**keyword.com CSV export** (required)")
+st.caption("In keyword.com: select all keywords → Export → CSV.")
+kw_csv_file = st.file_uploader(
+    "Upload keyword.com CSV",
+    type=["csv"],
+    key="kw_csv",
+)
+
+kw_csv_preview = None
+if kw_csv_file:
+    try:
+        csv_bytes_preview = kw_csv_file.read()
+        kw_csv_file.seek(0)
+        kw_csv_preview = parse_keyword_csv(csv_bytes_preview)
+        n_slides_needed = max(1, -(-len(kw_csv_preview["table_rows"]) // 10))
+        st.success(
+            f"CSV loaded: **{kw_csv_preview['total']} keywords** — "
+            f"Top 3: {kw_csv_preview['top3_count']} | "
+            f"Page 1: {kw_csv_preview['top10_count']} | "
+            f"Improved: {kw_csv_preview['improved_count']} | "
+            f"Table rows: {len(kw_csv_preview['table_rows'])} "
+            f"({'1 slide' if n_slides_needed == 1 else f'{n_slides_needed} slides'})"
+        )
+        with st.expander("Preview ranking table data"):
+            import pandas as pd
+            df = pd.DataFrame(kw_csv_preview["table_rows"])[
+                ["keyword", "start", "rank", "life", "volume", "category"]
+            ].rename(columns={
+                "keyword":  "Keyword",
+                "start":    "Start",
+                "rank":     "Rank",
+                "life":     "Life",
+                "volume":   "Volume",
+                "category": "Group",
+            })
+            st.dataframe(df, use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not parse CSV: {e}")
+
+custom_text_b = st.text_area(
+    "Additional notes for ranking table slide (optional)",
+    key="kw_custom_b",
+    placeholder="e.g. 本月排名改善最顯著的是 printshop (+56 positions)，見證了 on-page 優化的成效…",
+    height=80,
+)
+
+kw_tbl_ready = bool(pres_id and kw_csv_file and kw_csv_preview)
+if not kw_tbl_ready:
+    missing = []
+    if not pres_id:     missing.append("presentation ID")
+    if not kw_csv_file: missing.append("keyword.com CSV")
+    if missing:
+        st.warning(f"Please complete: {', '.join(missing)}")
+
+if st.button("Insert Keywords Ranking Table Slides", type="primary", disabled=not kw_tbl_ready, key="btn_kw_table"):
+    try:
+        with st.spinner("Reading CSV data…"):
+            csv_bytes = kw_csv_file.read()
+
+        with st.spinner("Generating insights and inserting slides…"):
+            result = build_keyword_table_slides(
+                presentation_id = pres_id,
+                csv_bytes       = csv_bytes,
+                kw_data         = kw_csv_preview,
+                custom_text_b   = custom_text_b,
+            )
+
+        n_tbl = result["table_slides"]
+        st.success(
+            f"✓ {n_tbl} ranking table slide{'s' if n_tbl > 1 else ''} inserted "
+            f"({result['table_rows_shown']} keywords shown)."
+        )
+        st.markdown(f"[Open presentation](https://docs.google.com/presentation/d/{pres_id}/edit)")
+    except Exception as e:
+        st.error(f"Error: {e}")
+        st.exception(e)
+
+st.divider()
+
+# ════════════════════════════════════════════════════════════
+# Section 3a — SEO Performance by Ahrefs
+# ════════════════════════════════════════════════════════════
+st.subheader("Section 3a — SEO Performance by Ahrefs")
+st.caption(
+    "One slide per analysis group — inserted at end of **'Website SEO Performance'** section. "
+    "Gemini analyses screenshots and description to generate slide title and insights. "
+    "Each group needs at least a description or image."
+)
+
+if "ahrefs_cards" not in st.session_state:
+    st.session_state.ahrefs_cards = [{"id": 0}]
+if "ahrefs_counter" not in st.session_state:
+    st.session_state.ahrefs_counter = 1
+
+def add_ahrefs_card():
+    st.session_state.ahrefs_counter += 1
+    st.session_state.ahrefs_cards.append({"id": st.session_state.ahrefs_counter})
+
+ah_to_remove = []
+for idx, card in enumerate(st.session_state.ahrefs_cards):
+    cid = card["id"]
+    with st.expander(f"Slide {idx + 1}", expanded=True):
+        col_lbl, col_del = st.columns([5, 1])
+        with col_lbl:
+            st.caption(f"Ahrefs slide {idx + 1} — description and/or images required")
+        with col_del:
+            st.write("")
+            if st.button("✕ Remove", key=f"ah_remove_{cid}"):
+                ah_to_remove.append(idx)
+
+        st.text_area(
+            "Description (optional) — what you want to highlight on this slide",
+            key=f"ah_text_{cid}",
+            placeholder="e.g. Backlink profile has grown by 12% this month, with 45 new referring domains acquired…",
+            height=100,
+        )
+        st.text_area(
+            "Ahrefs screenshot Drive links (one per line)",
+            key=f"ah_imgs_{cid}",
+            placeholder="https://drive.google.com/file/d/...",
+            height=80,
+        )
+
+        raw_ah_imgs = st.session_state.get(f"ah_imgs_{cid}", "")
+        if raw_ah_imgs:
+            ah_img_ids = [
+                extract_drive_id(l.strip())
+                for l in raw_ah_imgs.strip().splitlines() if l.strip()
+            ]
+            valid_ah_ids = [i for i in ah_img_ids if i]
+            if valid_ah_ids:
+                prev_cols = st.columns(min(len(valid_ah_ids), 3))
+                for pi, fid in enumerate(valid_ah_ids[:3]):
+                    with prev_cols[pi]:
+                        try:
+                            st.image(fetch_image_bytes(fid), use_container_width=True)
+                        except Exception:
+                            st.caption("Preview unavailable")
+
+for idx in sorted(ah_to_remove, reverse=True):
+    st.session_state.ahrefs_cards.pop(idx)
+if ah_to_remove:
+    st.rerun()
+
+col_add_ah, _, col_ins_ah = st.columns([2, 1, 3])
+with col_add_ah:
+    st.button("＋ Add Another Slide", on_click=add_ahrefs_card, key="btn_add_ahrefs")
+
+def ahrefs_cards_have_content() -> bool:
+    for card in st.session_state.ahrefs_cards:
+        cid = card["id"]
+        if (
+            st.session_state.get(f"ah_text_{cid}", "").strip()
+            or st.session_state.get(f"ah_imgs_{cid}", "").strip()
+        ):
+            return True
+    return False
+
+ahrefs_ready = bool(pres_id and ahrefs_cards_have_content())
+
+with col_ins_ah:
+    insert_ahrefs = st.button(
+        "Insert Ahrefs Analysis Slides",
+        type="primary",
+        disabled=not ahrefs_ready,
+        key="btn_ahrefs",
+    )
+
+if insert_ahrefs:
+    ah_payload = []
+    ah_progress = st.progress(0, text="Preparing Ahrefs slides…")
+    total_ah = len(st.session_state.ahrefs_cards)
+
+    for i, card in enumerate(st.session_state.ahrefs_cards):
+        cid  = card["id"]
+        desc = st.session_state.get(f"ah_text_{cid}", "").strip()
+        imgs = st.session_state.get(f"ah_imgs_{cid}", "").strip()
+
+        if not desc and not imgs:
+            continue
+
+        ah_progress.progress((i + 0.2) / total_ah, text=f"Analysing slide {i+1}…")
+
+        img_ids = [extract_drive_id(l.strip()) for l in imgs.splitlines() if l.strip()]
+        img_ids = [fid for fid in img_ids if fid]
+        img_bytes_list = []
+        img_urls = []
+        for fid in img_ids[:3]:
+            try:
+                b = fetch_image_bytes(fid)
+                img_bytes_list.append(b)
+                img_urls.append(drive_image_url(fid))
+            except Exception as e:
+                st.warning(f"Could not load image {fid}: {e}")
+
+        with st.spinner(f"AI analysing Ahrefs slide {i+1}…"):
+            try:
+                result = analyze_ahrefs_slide(
+                    description=desc,
+                    image_bytes_list=img_bytes_list,
+                )
+            except Exception as e:
+                result = {
+                    "slide_title": "Ahrefs SEO Analysis",
+                    "insight":     desc or "Ahrefs data reviewed.",
+                }
+                st.warning(f"AI analysis failed for slide {i+1}, using fallback: {e}")
+
+        ah_payload.append({
+            "slide_title": result.get("slide_title", "Ahrefs SEO Analysis"),
+            "insight":     result.get("insight", desc),
+            "image_urls":  img_urls,
+            "doc_url":     "",
+            "link_anchor": "",
+        })
+        ah_progress.progress((i + 1) / total_ah, text=f"Slide {i+1} analysed ✓")
+
+    if ah_payload:
+        with st.spinner("Inserting Ahrefs slides into presentation…"):
+            try:
+                n = build_ahrefs_slides(pres_id, ah_payload)
+                st.success(f"✓ {n} Ahrefs slide(s) inserted.")
+                st.markdown(f"[Open presentation](https://docs.google.com/presentation/d/{pres_id}/edit)")
+            except Exception as e:
+                st.error(f"Error inserting slides: {e}")
+                st.exception(e)
+    else:
+        st.warning("No valid slides to insert.")
+
+st.divider()
+
+# ════════════════════════════════════════════════════════════
+# Section 3b — Organic Competitors (Ahrefs)
+# ════════════════════════════════════════════════════════════
+st.subheader("Section 3b — Organic Competitors (Ahrefs)")
+st.caption(
+    "Upload an Ahrefs Organic Competitors CSV to generate a comparison table. "
+    "Gemini analyses the data and highlights your client's position vs competitors."
+)
+
+client_domain = st.text_input(
+    "Client domain (optional — used to highlight client row in table)",
+    placeholder="e.g. printcity.com.hk",
+    key="oc_domain",
+)
+
+st.markdown("**Ahrefs Organic Competitors CSV** (required)")
+st.caption("In Ahrefs: Site Explorer → Organic Competitors → Export CSV.")
+oc_csv_file = st.file_uploader(
+    "Upload Ahrefs Competitors CSV",
+    type=["csv"],
+    key="oc_csv",
+)
+
+oc_comp_data = None
+if oc_csv_file:
+    try:
+        _oc_bytes = oc_csv_file.read()
+        oc_csv_file.seek(0)
+        oc_comp_data = parse_competitor_csv(_oc_bytes)
+        st.success(
+            f"CSV loaded: **{oc_comp_data['total_found']} competitors** found "
+            f"(showing top {len(oc_comp_data['rows'])})."
+        )
+        with st.expander("Preview competitor data"):
+            import pandas as pd
+            df_comp = pd.DataFrame(oc_comp_data["rows"]).rename(columns={
+                "domain":  "Domain",
+                "dr":      "DR",
+                "org_kw":  "Org. Keywords",
+                "traffic": "Org. Traffic",
+                "tv":      "Traffic Value",
+            })
+            st.dataframe(df_comp, use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not parse CSV: {e}")
+
+st.markdown("**Ahrefs screenshot(s) (optional)**")
+st.caption("Share via Google Drive and paste links below — included in AI analysis but not always added to slide.")
+oc_img_links = st.text_area(
+    "Screenshot Drive links (one per line)",
+    key="oc_imgs",
+    placeholder="https://drive.google.com/file/d/...",
+    height=70,
+)
+
+oc_desc = st.text_area(
+    "Description (optional) — key points to highlight",
+    key="oc_desc",
+    placeholder="e.g. Our client is 3rd in organic traffic among the top 5 competitors but has the highest growth rate…",
+    height=80,
+)
+
+oc_ready = bool(pres_id and oc_csv_file and oc_comp_data)
+if not oc_ready:
+    missing = []
+    if not pres_id:      missing.append("presentation ID")
+    if not oc_csv_file:  missing.append("competitors CSV")
+    if missing:
+        st.warning(f"Please complete: {', '.join(missing)}")
+
+if st.button("Insert Organic Competitors Slide", type="primary", disabled=not oc_ready, key="btn_oc"):
+    oc_img_bytes_list = []
+    raw_oc_imgs = oc_img_links.strip()
+    if raw_oc_imgs:
+        oc_img_ids = [extract_drive_id(l.strip()) for l in raw_oc_imgs.splitlines() if l.strip()]
+        for fid in [i for i in oc_img_ids if i][:3]:
+            try:
+                oc_img_bytes_list.append(fetch_image_bytes(fid))
+            except Exception as e:
+                st.warning(f"Could not load image {fid}: {e}")
+
+    with st.spinner("AI analysing competitor data…"):
+        try:
+            analysis = analyze_organic_competitors(
+                description      = oc_desc.strip(),
+                image_bytes_list = oc_img_bytes_list,
+                competitor_rows  = oc_comp_data["rows"],
+                client_domain    = client_domain.strip(),
+            )
+        except Exception as e:
+            analysis = {
+                "slide_title": "Organic Competitors Overview",
+                "insight":     oc_desc.strip() or "Competitor analysis completed via Ahrefs.",
+            }
+            st.warning(f"AI analysis failed, using fallback: {e}")
+
+    with st.spinner("Inserting competitors slide…"):
+        try:
+            build_organic_competitors_slide(
+                presentation_id = pres_id,
+                comp_data = {
+                    "slide_title":  analysis.get("slide_title", "Organic Competitors Overview"),
+                    "insight":      analysis.get("insight", ""),
+                    "rows":         oc_comp_data["rows"],
+                    "client_domain": client_domain.strip(),
+                },
+            )
+            st.success("✓ Organic Competitors slide inserted.")
+            st.markdown(f"[Open presentation](https://docs.google.com/presentation/d/{pres_id}/edit)")
+        except Exception as e:
+            st.error(f"Error inserting slide: {e}")
+            st.exception(e)
 
 st.divider()
 st.caption("SEO Report Builder · Internal Use Only")

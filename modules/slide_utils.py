@@ -121,6 +121,32 @@ def find_header_index(slides: list, keywords: list,
     return None
 
 
+def find_seo_performance_end_index(slides: list) -> int | None:
+    """
+    Return the index to insert at the END of the 'Website SEO Performance'
+    section — just before 'Coming Tasks', or end of presentation.
+    Returns None if the SEO Performance header is not found.
+    """
+    SEO_PHRASES  = [["website seo"], ["seo performance"]]
+    SKIP         = ["tasks completed"]
+    NEXT_SECTION = ["coming tasks", "coming soon"]
+
+    header_idx = None
+    for kws in SEO_PHRASES:
+        header_idx = find_header_index(slides, kws, exclude_keywords=SKIP)
+        if header_idx is not None:
+            break
+    if header_idx is None:
+        return None
+
+    for i in range(header_idx + 1, len(slides)):
+        text = all_text_from_slide(slides[i]).lower()
+        if any(kw in text for kw in NEXT_SECTION):
+            return i
+
+    return len(slides)
+
+
 def delete_tool_slides_requests(slides: list, id_set: set) -> list:
     """
     Return deleteObject requests for slides whose objectId is in id_set.

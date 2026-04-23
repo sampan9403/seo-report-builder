@@ -300,27 +300,31 @@ def _find_detail_insert_index(slides: list) -> int:
 def build_task_detail_slides(
     presentation_id: str,
     tasks: list,
+    section_label: str = "Completed Tasks",
+    insert_at: int = None,
 ) -> int:
     """
     Build one detail slide per task and insert them into the presentation.
 
     Each task dict:
     {
-        "name":         str,          # task name
-        "insight":      str,          # Gemini-generated insight
-        "slide_title":  str,          # Gemini-generated title
-        "image_urls":   [str],        # public Drive image URLs (for Slides API)
-        "doc_url":      str,          # optional document link
-        "link_anchor":  str,          # optional anchor text
+        "name":         str,
+        "insight":      str,
+        "slide_title":  str,
+        "image_urls":   [str],
+        "doc_url":      str,
+        "link_anchor":  str,
     }
 
-    Returns number of slides created.
+    section_label: orange Bebas Neue label at top-left (default "Completed Tasks")
+    insert_at: override insertion index; None = auto-detect from presentation structure
     """
     service = get_service()
     pres    = service.presentations().get(presentationId=presentation_id).execute()
     slides  = pres["slides"]
 
-    insert_at = _find_detail_insert_index(slides)
+    if insert_at is None:
+        insert_at = _find_detail_insert_index(slides)
     run_id    = uuid.uuid4().hex[:8]
     all_reqs  = []
 
@@ -340,7 +344,7 @@ def build_task_detail_slides(
         all_reqs.extend(_frame_requests(prefix, slide_id))
 
         # 3. Section label (orange Bebas Neue)
-        all_reqs.extend(_section_label_requests(prefix, slide_id, "Completed Tasks"))
+        all_reqs.extend(_section_label_requests(prefix, slide_id, section_label))
 
         # 4. Task title bar (white, dark bold)
         title_text = task.get("slide_title") or task.get("name", "Task")
