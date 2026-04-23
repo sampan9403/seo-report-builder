@@ -66,6 +66,52 @@ def fetch_image_bytes(file_id: str) -> bytes:
     r.raise_for_status()
     return r.content
 
+def read_as_csv(uploaded_file, key_prefix: str) -> bytes | None:
+    """
+    Accept CSV or Excel uploads; return UTF-8 CSV bytes.
+    For Excel files with multiple sheets, show a sheet selector so the
+    uploader can specify which tab they are importing.
+    """
+    import pandas as pd
+
+    fname = (uploaded_file.name or "").lower()
+    is_excel = fname.endswith(".xlsx") or fname.endswith(".xls")
+
+    if not is_excel:
+        data = uploaded_file.read()
+        uploaded_file.seek(0)
+        return data
+
+    # ── Excel path ────────────────────────────────────────────
+    try:
+        uploaded_file.seek(0)
+        xl = pd.ExcelFile(uploaded_file)
+        sheets = xl.sheet_names
+    except Exception as e:
+        st.error(f"Could not open Excel file: {e}")
+        return None
+
+    if len(sheets) == 1:
+        selected = sheets[0]
+        st.caption(f"Excel file detected — importing from sheet: **{selected}**")
+    else:
+        st.info(
+            f"This Excel file contains **{len(sheets)} sheets**. "
+            "Please select the tab you want to import:"
+        )
+        selected = st.selectbox(
+            "Select sheet / tab to import",
+            options=sheets,
+            key=f"{key_prefix}_sheet_sel",
+        )
+
+    try:
+        df = xl.parse(selected)
+        return df.to_csv(index=False).encode("utf-8-sig")
+    except Exception as e:
+        st.error(f"Could not read sheet '{selected}': {e}")
+        return None
+
 
 # ── Step 1: Target Presentation ──────────────────────────────
 st.subheader("Step 1 — Target Google Slides")
@@ -316,24 +362,24 @@ elif link10:
 st.markdown("**Keyword CSV (optional — for ranking stats)**")
 st.caption("If uploaded, the slide will display top-3 / page-1 / improved counts.")
 kw_csv_for_overview = st.file_uploader(
-    "Upload keyword.com CSV (optional)",
-    type=["csv"],
+    "Upload keyword.com CSV or Excel (optional)",
+    type=["csv", "xlsx", "xls"],
     key="kw_csv_overview",
 )
 kw_data_for_overview = None
 if kw_csv_for_overview:
     try:
-        _bytes = kw_csv_for_overview.read()
-        kw_csv_for_overview.seek(0)
-        kw_data_for_overview = parse_keyword_csv(_bytes)
-        st.success(
-            f"CSV loaded: {kw_data_for_overview['total']} keywords — "
-            f"Top 3: {kw_data_for_overview['top3_count']} | "
-            f"Page 1: {kw_data_for_overview['top10_count']} | "
-            f"Improved: {kw_data_for_overview['improved_count']}"
-        )
+        _bytes = read_as_csv(kw_csv_for_overview, "kw_ov")
+        if _bytes:
+            kw_data_for_overview = parse_keyword_csv(_bytes)
+            st.success(
+                f"Loaded: {kw_data_for_overview['total']} keywords — "
+                f"Top 3: {kw_data_for_overview['top3_count']} | "
+                f"Page 1: {kw_data_for_overview['top10_count']} | "
+                f"Improved: {kw_data_for_overview['improved_count']}"
+            )
     except Exception as e:
-        st.error(f"Could not parse CSV: {e}")
+        st.error(f"Could not parse file: {e}")
 
 custom_text_a = st.text_area(
     "Additional notes for this slide (optional)",
@@ -382,41 +428,41 @@ st.caption(
 st.markdown("**keyword.com CSV export** (required)")
 st.caption("In keyword.com: select all keywords → Export → CSV.")
 kw_csv_file = st.file_uploader(
-    "Upload keyword.com CSV",
-    type=["csv"],
+    "Upload keyword.com CSV or Excel",
+    type=["csv", "xlsx", "xls"],
     key="kw_csv",
 )
 
 kw_csv_preview = None
 if kw_csv_file:
     try:
-        csv_bytes_preview = kw_csv_file.read()
-        kw_csv_file.seek(0)
-        kw_csv_preview = parse_keyword_csv(csv_bytes_preview)
-        n_slides_needed = max(1, -(-len(kw_csv_preview["table_rows"]) // 10))
-        st.success(
-            f"CSV loaded: **{kw_csv_preview['total']} keywords** — "
-            f"Top 3: {kw_csv_preview['top3_count']} | "
-            f"Page 1: {kw_csv_preview['top10_count']} | "
-            f"Improved: {kw_csv_preview['improved_count']} | "
-            f"Table rows: {len(kw_csv_preview['table_rows'])} "
-            f"({'1 slide' if n_slides_needed == 1 else f'{n_slides_needed} slides'})"
-        )
-        with st.expander("Preview ranking table data"):
-            import pandas as pd
-            df = pd.DataFrame(kw_csv_preview["table_rows"])[
-                ["keyword", "start", "rank", "life", "volume", "category"]
-            ].rename(columns={
-                "keyword":  "Keyword",
-                "start":    "Start",
-                "rank":     "Rank",
-                "life":     "Life",
-                "volume":   "Volume",
-                "category": "Group",
-            })
-            st.dataframe(df, use_container_width=True)
+        _kw_bytes = read_as_csv(kw_csv_file, "kw_tbl")
+        if _kw_bytes:
+            kw_csv_preview = parse_keyword_csv(_kw_bytes)
+            n_slides_needed = max(1, -(-len(kw_csv_preview["table_rows"]) // 10))
+            st.success(
+                f"Loaded: **{kw_csv_preview['total']} keywords** — "
+                f"Top 3: {kw_csv_preview['top3_count']} | "
+                f"Page 1: {kw_csv_preview['top10_count']} | "
+                f"Improved: {kw_csv_preview['improved_count']} | "
+                f"Table rows: {len(kw_csv_preview['table_rows'])} "
+                f"({'1 slide' if n_slides_needed == 1 else f'{n_slides_needed} slides'})"
+            )
+            with st.expander("Preview ranking table data"):
+                import pandas as pd
+                df = pd.DataFrame(kw_csv_preview["table_rows"])[
+                    ["keyword", "start", "rank", "life", "volume", "category"]
+                ].rename(columns={
+                    "keyword":  "Keyword",
+                    "start":    "Start",
+                    "rank":     "Rank",
+                    "life":     "Life",
+                    "volume":   "Volume",
+                    "category": "Group",
+                })
+                st.dataframe(df, use_container_width=True)
     except Exception as e:
-        st.error(f"Could not parse CSV: {e}")
+        st.error(f"Could not parse file: {e}")
 
 custom_text_b = st.text_area(
     "Additional notes for ranking table slide (optional)",
@@ -435,13 +481,10 @@ if not kw_tbl_ready:
 
 if st.button("Insert Keywords Ranking Table Slides", type="primary", disabled=not kw_tbl_ready, key="btn_kw_table"):
     try:
-        with st.spinner("Reading CSV data…"):
-            csv_bytes = kw_csv_file.read()
-
         with st.spinner("Generating insights and inserting slides…"):
             result = build_keyword_table_slides(
                 presentation_id = pres_id,
-                csv_bytes       = csv_bytes,
+                csv_bytes       = b"",
                 kw_data         = kw_csv_preview,
                 custom_text_b   = custom_text_b,
             )
@@ -628,33 +671,33 @@ client_domain = st.text_input(
 st.markdown("**Ahrefs Organic Competitors CSV** (required)")
 st.caption("In Ahrefs: Site Explorer → Organic Competitors → Export CSV.")
 oc_csv_file = st.file_uploader(
-    "Upload Ahrefs Competitors CSV",
-    type=["csv"],
+    "Upload Ahrefs Competitors CSV or Excel",
+    type=["csv", "xlsx", "xls"],
     key="oc_csv",
 )
 
 oc_comp_data = None
 if oc_csv_file:
     try:
-        _oc_bytes = oc_csv_file.read()
-        oc_csv_file.seek(0)
-        oc_comp_data = parse_competitor_csv(_oc_bytes)
-        st.success(
-            f"CSV loaded: **{oc_comp_data['total_found']} competitors** found "
-            f"(showing top {len(oc_comp_data['rows'])})."
-        )
-        with st.expander("Preview competitor data"):
-            import pandas as pd
-            df_comp = pd.DataFrame(oc_comp_data["rows"]).rename(columns={
-                "domain":  "Domain",
-                "dr":      "DR",
-                "org_kw":  "Org. Keywords",
-                "traffic": "Org. Traffic",
-                "tv":      "Traffic Value",
-            })
-            st.dataframe(df_comp, use_container_width=True)
+        _oc_bytes = read_as_csv(oc_csv_file, "oc")
+        if _oc_bytes:
+            oc_comp_data = parse_competitor_csv(_oc_bytes)
+            st.success(
+                f"Loaded: **{oc_comp_data['total_found']} competitors** found "
+                f"(showing top {len(oc_comp_data['rows'])})."
+            )
+            with st.expander("Preview competitor data"):
+                import pandas as pd
+                df_comp = pd.DataFrame(oc_comp_data["rows"]).rename(columns={
+                    "domain":  "Domain",
+                    "dr":      "DR",
+                    "org_kw":  "Org. Keywords",
+                    "traffic": "Org. Traffic",
+                    "tv":      "Traffic Value",
+                })
+                st.dataframe(df_comp, use_container_width=True)
     except Exception as e:
-        st.error(f"Could not parse CSV: {e}")
+        st.error(f"Could not parse file: {e}")
 
 st.markdown("**Ahrefs screenshot(s) (optional)**")
 st.caption("Share via Google Drive and paste links below — included in AI analysis but not always added to slide.")
@@ -887,35 +930,35 @@ st.caption(
 st.markdown("**GSC performance CSV** (required)")
 st.caption("In GSC: Performance → select date range → Export → Download CSV.")
 gsc_csv_file = st.file_uploader(
-    "Upload GSC CSV",
-    type=["csv"],
+    "Upload GSC CSV or Excel",
+    type=["csv", "xlsx", "xls"],
     key="gsc_csv",
 )
 
 gsc_csv_data = None
 if gsc_csv_file:
     try:
-        _gsc_bytes = gsc_csv_file.read()
-        gsc_csv_file.seek(0)
-        gsc_csv_data = parse_gsc_csv(_gsc_bytes)
-        st.success(
-            f"CSV loaded: **{gsc_csv_data['report_type']} report** — "
-            f"{gsc_csv_data['total_rows']} entries | "
-            f"Total clicks: {gsc_csv_data['total_clicks']:,} | "
-            f"Total impressions: {gsc_csv_data['total_impressions']:,}"
-        )
-        with st.expander("Preview top entries"):
-            import pandas as pd
-            df_gsc = pd.DataFrame(gsc_csv_data["table_rows"]).rename(columns={
-                "dimension":   gsc_csv_data["dim_col"] or "Dimension",
-                "clicks":      "Clicks",
-                "impressions": "Impressions",
-                "ctr":         "CTR",
-                "position":    "Avg. Position",
-            })
-            st.dataframe(df_gsc, use_container_width=True)
+        _gsc_bytes = read_as_csv(gsc_csv_file, "gsc")
+        if _gsc_bytes:
+            gsc_csv_data = parse_gsc_csv(_gsc_bytes)
+            st.success(
+                f"Loaded: **{gsc_csv_data['report_type']} report** — "
+                f"{gsc_csv_data['total_rows']} entries | "
+                f"Total clicks: {gsc_csv_data['total_clicks']:,} | "
+                f"Total impressions: {gsc_csv_data['total_impressions']:,}"
+            )
+            with st.expander("Preview top entries"):
+                import pandas as pd
+                df_gsc = pd.DataFrame(gsc_csv_data["table_rows"]).rename(columns={
+                    "dimension":   gsc_csv_data["dim_col"] or "Dimension",
+                    "clicks":      "Clicks",
+                    "impressions": "Impressions",
+                    "ctr":         "CTR",
+                    "position":    "Avg. Position",
+                })
+                st.dataframe(df_gsc, use_container_width=True)
     except Exception as e:
-        st.error(f"Could not parse CSV: {e}")
+        st.error(f"Could not parse file: {e}")
 
 gsc_csv_notes = st.text_area(
     "Analysis notes (optional) — describe focus areas or specific keywords/pages to analyse",
