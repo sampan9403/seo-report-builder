@@ -22,6 +22,13 @@ from modules.ahrefs_builder import (
     analyze_organic_competitors,
     build_organic_competitors_slide,
 )
+from modules.gsc_builder import (
+    analyze_gsc_images,
+    build_gsc_image_slides,
+    parse_gsc_csv,
+    analyze_gsc_csv,
+    build_gsc_csv_slide,
+)
 
 st.set_page_config(page_title="SEO Report Builder", page_icon="📊", layout="centered")
 st.title("📊 SEO Report Builder")
@@ -711,6 +718,274 @@ if st.button("Insert Organic Competitors Slide", type="primary", disabled=not oc
                 },
             )
             st.success("✓ Organic Competitors slide inserted.")
+            st.markdown(f"[Open presentation](https://docs.google.com/presentation/d/{pres_id}/edit)")
+        except Exception as e:
+            st.error(f"Error inserting slide: {e}")
+            st.exception(e)
+
+st.divider()
+
+# ════════════════════════════════════════════════════════════
+# Section 4a — Google Search Console Analysis (Screenshots)
+# ════════════════════════════════════════════════════════════
+st.subheader("Section 4a — Google Search Console Analysis")
+st.caption(
+    "Upload GSC screenshots for AI analysis — one slide per group. "
+    "Gemini identifies the GSC report type and generates slide title + insights. "
+    "Inserted at end of **'Website SEO Performance'** section."
+)
+
+if "gsc_cards" not in st.session_state:
+    st.session_state.gsc_cards = [{"id": 0}]
+if "gsc_counter" not in st.session_state:
+    st.session_state.gsc_counter = 1
+
+def add_gsc_card():
+    st.session_state.gsc_counter += 1
+    st.session_state.gsc_cards.append({"id": st.session_state.gsc_counter})
+
+gsc_to_remove = []
+for idx, card in enumerate(st.session_state.gsc_cards):
+    cid = card["id"]
+    with st.expander(f"Slide {idx + 1}", expanded=True):
+        col_lbl, col_del = st.columns([5, 1])
+        with col_lbl:
+            st.caption(f"GSC slide {idx + 1} — description and/or screenshots required")
+        with col_del:
+            st.write("")
+            if st.button("✕ Remove", key=f"gsc_remove_{cid}"):
+                gsc_to_remove.append(idx)
+
+        st.text_area(
+            "Description (optional) — key points you want to highlight on this slide",
+            key=f"gsc_text_{cid}",
+            placeholder="e.g. Overall clicks increased by 18% MoM; CTR improved on mobile after the title tag optimisation in week 2…",
+            height=100,
+        )
+        st.text_area(
+            "GSC screenshot Drive links (one per line)",
+            key=f"gsc_imgs_{cid}",
+            placeholder="https://drive.google.com/file/d/...",
+            height=80,
+        )
+
+        raw_gsc_imgs = st.session_state.get(f"gsc_imgs_{cid}", "")
+        if raw_gsc_imgs:
+            gsc_img_ids = [
+                extract_drive_id(l.strip())
+                for l in raw_gsc_imgs.strip().splitlines() if l.strip()
+            ]
+            valid_gsc_ids = [i for i in gsc_img_ids if i]
+            if valid_gsc_ids:
+                prev_cols = st.columns(min(len(valid_gsc_ids), 3))
+                for pi, fid in enumerate(valid_gsc_ids[:3]):
+                    with prev_cols[pi]:
+                        try:
+                            st.image(fetch_image_bytes(fid), use_container_width=True)
+                        except Exception:
+                            st.caption("Preview unavailable")
+
+for idx in sorted(gsc_to_remove, reverse=True):
+    st.session_state.gsc_cards.pop(idx)
+if gsc_to_remove:
+    st.rerun()
+
+col_add_gsc, _, col_ins_gsc = st.columns([2, 1, 3])
+with col_add_gsc:
+    st.button("＋ Add Another Slide", on_click=add_gsc_card, key="btn_add_gsc")
+
+def gsc_cards_have_content() -> bool:
+    for card in st.session_state.gsc_cards:
+        cid = card["id"]
+        if (
+            st.session_state.get(f"gsc_text_{cid}", "").strip()
+            or st.session_state.get(f"gsc_imgs_{cid}", "").strip()
+        ):
+            return True
+    return False
+
+gsc_img_ready = bool(pres_id and gsc_cards_have_content())
+
+with col_ins_gsc:
+    insert_gsc = st.button(
+        "Insert GSC Analysis Slides",
+        type="primary",
+        disabled=not gsc_img_ready,
+        key="btn_gsc_imgs",
+    )
+
+if insert_gsc:
+    gsc_payload = []
+    gsc_progress = st.progress(0, text="Preparing GSC slides…")
+    total_gsc = len(st.session_state.gsc_cards)
+
+    for i, card in enumerate(st.session_state.gsc_cards):
+        cid  = card["id"]
+        desc = st.session_state.get(f"gsc_text_{cid}", "").strip()
+        imgs = st.session_state.get(f"gsc_imgs_{cid}", "").strip()
+
+        if not desc and not imgs:
+            continue
+
+        gsc_progress.progress((i + 0.2) / total_gsc, text=f"Analysing slide {i+1}…")
+
+        img_ids = [extract_drive_id(l.strip()) for l in imgs.splitlines() if l.strip()]
+        img_ids = [fid for fid in img_ids if fid]
+        img_bytes_list, img_urls = [], []
+        for fid in img_ids[:3]:
+            try:
+                b = fetch_image_bytes(fid)
+                img_bytes_list.append(b)
+                img_urls.append(drive_image_url(fid))
+            except Exception as e:
+                st.warning(f"Could not load image {fid}: {e}")
+
+        with st.spinner(f"AI analysing GSC slide {i+1}…"):
+            try:
+                result = analyze_gsc_images(
+                    description=desc,
+                    image_bytes_list=img_bytes_list,
+                )
+            except Exception as e:
+                result = {
+                    "slide_title": "GSC Search Performance",
+                    "insight":     desc or "GSC data reviewed.",
+                }
+                st.warning(f"AI analysis failed for slide {i+1}, using fallback: {e}")
+
+        gsc_payload.append({
+            "slide_title": result.get("slide_title", "GSC Search Performance"),
+            "insight":     result.get("insight", desc),
+            "image_urls":  img_urls,
+        })
+        gsc_progress.progress((i + 1) / total_gsc, text=f"Slide {i+1} analysed ✓")
+
+    if gsc_payload:
+        with st.spinner("Inserting GSC slides into presentation…"):
+            try:
+                n = build_gsc_image_slides(pres_id, gsc_payload)
+                st.success(f"✓ {n} GSC analysis slide(s) inserted.")
+                st.markdown(f"[Open presentation](https://docs.google.com/presentation/d/{pres_id}/edit)")
+            except Exception as e:
+                st.error(f"Error inserting slides: {e}")
+                st.exception(e)
+    else:
+        st.warning("No valid slides to insert.")
+
+st.divider()
+
+# ════════════════════════════════════════════════════════════
+# Section 4b — GSC Performance Data (CSV)
+# ════════════════════════════════════════════════════════════
+st.subheader("Section 4b — GSC Performance Data (CSV)")
+st.caption(
+    "Upload a GSC performance CSV (Queries, Pages, Countries, etc.). "
+    "Generates a data table + AI insight. "
+    "Add notes to focus analysis on specific keywords or pages."
+)
+
+st.markdown("**GSC performance CSV** (required)")
+st.caption("In GSC: Performance → select date range → Export → Download CSV.")
+gsc_csv_file = st.file_uploader(
+    "Upload GSC CSV",
+    type=["csv"],
+    key="gsc_csv",
+)
+
+gsc_csv_data = None
+if gsc_csv_file:
+    try:
+        _gsc_bytes = gsc_csv_file.read()
+        gsc_csv_file.seek(0)
+        gsc_csv_data = parse_gsc_csv(_gsc_bytes)
+        st.success(
+            f"CSV loaded: **{gsc_csv_data['report_type']} report** — "
+            f"{gsc_csv_data['total_rows']} entries | "
+            f"Total clicks: {gsc_csv_data['total_clicks']:,} | "
+            f"Total impressions: {gsc_csv_data['total_impressions']:,}"
+        )
+        with st.expander("Preview top entries"):
+            import pandas as pd
+            df_gsc = pd.DataFrame(gsc_csv_data["table_rows"]).rename(columns={
+                "dimension":   gsc_csv_data["dim_col"] or "Dimension",
+                "clicks":      "Clicks",
+                "impressions": "Impressions",
+                "ctr":         "CTR",
+                "position":    "Avg. Position",
+            })
+            st.dataframe(df_gsc, use_container_width=True)
+    except Exception as e:
+        st.error(f"Could not parse CSV: {e}")
+
+gsc_csv_notes = st.text_area(
+    "Analysis notes (optional) — describe focus areas or specific keywords/pages to analyse",
+    key="gsc_csv_notes",
+    placeholder=(
+        "e.g. Please focus on keywords related to 'foam board' and 'backdrop' — "
+        "I want to understand their click and position trends this month. "
+        "Also highlight any queries ranking in positions 11-20 that are close to page 1."
+    ),
+    height=100,
+)
+
+st.markdown("**Additional screenshots for AI context (optional)**")
+st.caption("Screenshots are used for AI analysis only and will not appear in the slide.")
+gsc_csv_imgs = st.text_area(
+    "GSC screenshot Drive links (one per line, optional)",
+    key="gsc_csv_imgs",
+    placeholder="https://drive.google.com/file/d/...",
+    height=70,
+)
+
+gsc_csv_ready = bool(pres_id and gsc_csv_file and gsc_csv_data)
+if not gsc_csv_ready:
+    missing = []
+    if not pres_id:      missing.append("presentation ID")
+    if not gsc_csv_file: missing.append("GSC CSV")
+    if missing:
+        st.warning(f"Please complete: {', '.join(missing)}")
+
+if st.button("Insert GSC Data Slide", type="primary", disabled=not gsc_csv_ready, key="btn_gsc_csv"):
+    # Load optional context screenshots (for Gemini only)
+    ctx_img_bytes = []
+    for link in gsc_csv_imgs.strip().splitlines():
+        fid = extract_drive_id(link.strip())
+        if fid:
+            try:
+                ctx_img_bytes.append(fetch_image_bytes(fid))
+            except Exception as e:
+                st.warning(f"Could not load context image {fid}: {e}")
+
+    with st.spinner("AI analysing GSC data…"):
+        try:
+            analysis = analyze_gsc_csv(
+                csv_data         = gsc_csv_data,
+                user_notes       = gsc_csv_notes.strip(),
+                image_bytes_list = ctx_img_bytes,
+            )
+        except Exception as e:
+            analysis = {
+                "slide_title": f"GSC {gsc_csv_data['report_type']} Performance",
+                "insight":     gsc_csv_notes.strip() or "GSC performance data reviewed.",
+            }
+            st.warning(f"AI analysis failed, using fallback: {e}")
+
+    with st.spinner("Inserting GSC data slide…"):
+        try:
+            build_gsc_csv_slide(
+                presentation_id = pres_id,
+                gsc_slide_data = {
+                    "slide_title": analysis.get("slide_title", f"GSC {gsc_csv_data['report_type']} Performance"),
+                    "insight":     analysis.get("insight", ""),
+                    "dim_col":     gsc_csv_data["dim_col"],
+                    "report_type": gsc_csv_data["report_type"],
+                    "table_rows":  gsc_csv_data["table_rows"],
+                },
+            )
+            st.success(
+                f"✓ GSC {gsc_csv_data['report_type']} data slide inserted "
+                f"(top {len(gsc_csv_data['table_rows'])} of {gsc_csv_data['total_rows']} entries shown)."
+            )
             st.markdown(f"[Open presentation](https://docs.google.com/presentation/d/{pres_id}/edit)")
         except Exception as e:
             st.error(f"Error inserting slide: {e}")
